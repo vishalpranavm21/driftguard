@@ -1,3 +1,4 @@
 fastapi
 uvicorn
-anthropic
+# optional, only for DRIFTGUARD_LLM=claude:
+# anthropic

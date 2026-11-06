@@ -12,7 +12,7 @@ LLM backend (env DRIFTGUARD_LLM):
 Fixed rules always run too, and the final score is max(llm, rules):
 the AI can only make the verdict stricter, never looser.
 
-Run:  cd engine && uvicorn app:app --port 8080
+Run:  cd engine && uvicorn app:app --port 8088   (8080 is often taken by Jenkins)
 """
 import datetime
 import json
@@ -33,6 +33,7 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-5-5")
 AI_KEY = os.getenv("AI_KEY", str(pathlib.Path(__file__).resolve().parent.parent / "ai.key"))
 
 app = FastAPI(title="DriftGuard AI Guardrail Engine")
+LAST: dict = {}   # most recent score, shown by the dashboard (read-only)
 
 RISK_SCHEMA = {
     "type": "object",
@@ -62,7 +63,7 @@ def _ollama(prompt: str) -> dict:
         "model": OLLAMA_MODEL,
         "stream": False,
         "format": RISK_SCHEMA,              # structured output: must match the schema
-        "options": {"temperature": 0},
+        "options": {"temperature": 0, "num_predict": 400},  # cap: no runaway generations
         "messages": [{"role": "system", "content": SYSTEM},
                      {"role": "user", "content": prompt}],
     }).encode()
@@ -86,7 +87,7 @@ def _claude(prompt: str) -> dict:
 
 # ---------------------------------------------------------------- fixed rules
 RULES = [
-    (r'"user root"|\buser\s+root\b', 85, "container runs as root"),
+    (r'(^|\\n|\s|")user\s+root\b', 85, "container runs as root"),  # "\\n" = newline inside JSON text
     (r"ubuntu:1[4-8]\.04|debian:(jessie|stretch|buster)|centos:[5-8]\b|alpine:3\.(1[0-6]|[0-9])\b",
      85, "end-of-life base image"),
     (r'"critical":\s*[1-9]', 80, "CRITICAL vulnerabilities present"),
@@ -121,7 +122,8 @@ def score(kind: str, payload: str, rules_text: str | None = None) -> dict:
     final = max(rules["risk_score"], llm["risk_score"] if llm else 0)
     reasons = (llm.get("reasons", []) if llm else []) + \
               [f"rule: {r}" for r in rules["reasons"] if rules["risk_score"] > 15]
-    return {
+    result = {
+        "kind": kind,
         "risk_score": final,
         "category": "dangerous" if final >= 70 else "needs_review" if final >= 30 else "safe",
         "reasons": reasons[:6] or rules["reasons"],
@@ -131,6 +133,9 @@ def score(kind: str, payload: str, rules_text: str | None = None) -> dict:
         "model": model,
         "scored_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
+    LAST.clear()
+    LAST.update(result)
+    return result
 
 
 def _mask(value, sensitive):
@@ -199,7 +204,7 @@ def attest(image: str, predicate: dict):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(predicate, f)
     subprocess.run(
-        ["cosign", "attest", "--yes", "--tlog-upload=false", "--allow-insecure-registry",
+        ["cosign", "attest", "--yes", "--tlog-upload=false", "--allow-insecure-registry", "--allow-http-registry",
          "--key", AI_KEY, "--type", "https://driftguard.dev/risk/v1",
          "--predicate", f.name, image],
         check=True, env={**os.environ, "COSIGN_PASSWORD": ""},
@@ -210,3 +215,8 @@ def attest(image: str, predicate: dict):
 def healthz():
     return {"ok": True, "backend": BACKEND,
             "model": OLLAMA_MODEL if BACKEND == "ollama" else CLAUDE_MODEL if BACKEND == "claude" else None}
+
+
+@app.get("/last")
+def last():
+    return LAST or {"note": "nothing scored yet"}
