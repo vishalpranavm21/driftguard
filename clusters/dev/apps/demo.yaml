@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: demo
-          image: k3d-dgreg:5000/demo@sha256:c8c94ce306513402d8668293ceaa8321338b515aeaa7017646aec9c1fb415388
+          image: k3d-dgreg:5000/demo@sha256:c981d88fd0eccc46b08bb550d4aed04120df37213a6ed33c1290d53465307647
           ports:
             - containerPort: 8080
           securityContext:
