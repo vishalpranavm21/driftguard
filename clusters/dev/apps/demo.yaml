@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: demo
-          image: nginxinc/nginx-unprivileged:1.27-alpine
+          image: k3d-dgreg:5000/demo@sha256:c8c94ce306513402d8668293ceaa8321338b515aeaa7017646aec9c1fb415388
           ports:
             - containerPort: 8080
           securityContext:
