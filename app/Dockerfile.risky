@@ -1,0 +1,6 @@
+# Deliberately risky image for the demo: end-of-life base, extra tools, runs as root
+FROM ubuntu:18.04
+RUN apt-get update && apt-get install -y curl netcat openssh-server && rm -rf /var/lib/apt/lists/*
+COPY index.html /var/www/index.html
+USER root
+CMD ["sleep", "infinity"]

@@ -1,0 +1,10 @@
+*.key
+*.pub
+.terraform/
+.terraform.lock.hcl
+*.tfstate*
+infra/tf.plan
+infra/plan.json
+infra/risk.json
+.venv/
+__pycache__/
