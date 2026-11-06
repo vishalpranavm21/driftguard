@@ -1,0 +1,60 @@
+# Rendered into clusters/dev/apps/supply-chain.yaml by scripts/make-keys-and-policy.sh
+# Rule 1: image must be signed by CI.  Rule 2: image must carry an AI risk score < 70,
+# signed by the AI key. The AI can sign a score; only Kyverno can admit or deny.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: driftguard-supply-chain
+spec:
+  background: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: require-ci-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [apps]
+      verifyImages:
+        - imageReferences: ["k3d-dgreg:5000/*"]
+          failureAction: Enforce
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1IuoABDd7yuD95vzQhDSp0kKV0cK
+                      8HQnSe48dLDNdCT23QoNqmZI12giNhJUAC5pwaHrXd2RQcQb9mXlb3k3gQ==
+                      -----END PUBLIC KEY-----
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true
+    - name: require-low-ai-risk
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [apps]
+      verifyImages:
+        - imageReferences: ["k3d-dgreg:5000/*"]
+          failureAction: Enforce
+          attestations:
+            - type: https://driftguard.dev/risk/v1
+              attestors:
+                - entries:
+                    - keys:
+                        publicKeys: |-
+                          -----BEGIN PUBLIC KEY-----
+                          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZgofJacWYejHGWRi5SD4h6izA3oQ
+                          F9uPGTLJhGanqqMGLkqD3tDd/YXzlcYXPG2+GjR9xcf5OzzWKVqEWoNR9g==
+                          -----END PUBLIC KEY-----
+                        rekor:
+                          ignoreTlog: true
+                        ctlog:
+                          ignoreSCT: true
+              conditions:
+                - all:
+                    - key: "{{ risk_score }}"
+                      operator: LessThan
+                      value: 70
