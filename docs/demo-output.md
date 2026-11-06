@@ -1,6 +1,6 @@
 # DriftGuard demo output
 
-Recorded on 2026-11-06 on a local k3d cluster (k3s v1.35, Kyverno 1.19.2, Flux v2.10.0).
+Recorded on 2026-11-06 on a local k3d cluster (k3s v1.35, Kyverno 1.19.2, Flux v2.10.0, Falco 0.45.2).
 AI engine: local **Ollama `qwen2.5:3b`** (CPU), fixed rules always on, final score = max(AI, rules).
 
 ## 1. Kubernetes drift self-healing (Flux)
@@ -223,3 +223,33 @@ Afterwards, with `main.tf` reverted:
 $ bash scripts/plan.sh
 No drift: infrastructure matches code.
 ```
+
+## 8. Runtime detection (Falco, optional)
+Falco 0.45.2 via Helm with the `modern_ebpf` driver. The demo app runs as non-root, so reading `/etc/shadow`
+is refused by the kernel; the attacker's follow-up search for private keys is flagged by Falco.
+```
+$ bash scripts/falco.sh
+>>> Simulating an attacker inside the app: reading /etc/shadow and hunting for private keys
+05:50:06.472870877: Warning Grep private keys or passwords activities found | evt_type=execve user=<NA> user_uid=101 user_loginuid=-1 process=find proc_exepath=/bin/busybox parent=sh command=find / -name id_rsa terminal=0 exe_flags=EXE_LOWER_LAYER container_id=7583f6b24eff container_name=demo ...
+05:50:36.250056836: Warning Grep private keys or passwords activities found | evt_type=execve user=<NA> user_uid=101 user_loginuid=-1 process=find proc_exepath=/bin/busybox parent=<NA> command=find / -name id_rsa terminal=0 exe_flags=EXE_LOWER_LAYER container_id=7583f6b24eff container_name=demo ...
+```
+
+## 9. Control-panel dashboard (`bash scripts/start-demo.sh` → http://localhost:8090)
+Every button was clicked in a real (headless) Chrome and also driven through the API:
+
+| Button | Result | Time |
+| --- | --- | --- |
+| Simulate Kubernetes drift | replicas 5 → 2 after `flux reconcile`, completed | ~20 s |
+| Deploy safe image | AI 20 / rules 15 → ADMITTED, new pods Running | ~45-65 s |
+| Deploy risky image | AI 29 / rules 85 → DENIED by `autogen-require-low-ai-risk`, old pods kept running | ~85 s |
+| Simulate infra drift + heal | AI 30 / rules 15 → gate passed, configmap restored | ~20 s |
+| Try risky infra change | AI 30 / rules 85 → BLOCKED by OPA, `main.tf` restored | ~15 s |
+
+A second press while an action runs returns HTTP 409 and all buttons are disabled in the page.
+
+Note the infra rows: the small local model under-rates `allowed_origins="*"` (AI 30), but the fixed rules
+score it 85 and the final score is `max(AI, rules)`, so it is still blocked. The AI can only tighten.
+
+![Safe image admitted](img/dashboard-safe-admitted.png)
+![Risky image denied](img/dashboard-risky-denied.png)
+![Risky infra change blocked](img/dashboard-infra-blocked.png)
