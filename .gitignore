@@ -8,3 +8,4 @@ infra/plan.json
 infra/risk.json
 .venv/
 __pycache__/
+*.pem
