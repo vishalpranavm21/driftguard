@@ -1,60 +1,61 @@
-# Rendered into clusters/dev/apps/supply-chain.yaml by scripts/make-keys-and-policy.sh
-# Rule 1: image must be signed by CI.  Rule 2: image must carry an AI risk score < 70,
-# signed by the AI key. The AI can sign a score; only Kyverno can admit or deny.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# Kyverno >= 1.20 format. Rendered by scripts/make-keys-and-policy.sh
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
 metadata:
   name: driftguard-supply-chain
 spec:
-  background: false
-  webhookTimeoutSeconds: 30
-  rules:
-    - name: require-ci-signature
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-              namespaces: [apps]
-      verifyImages:
-        - imageReferences: ["k3d-dgreg:5000/*"]
-          failureAction: Enforce
-          attestors:
-            - entries:
-                - keys:
-                    publicKeys: |-
-                      -----BEGIN PUBLIC KEY-----
-                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1IuoABDd7yuD95vzQhDSp0kKV0cK
-                      8HQnSe48dLDNdCT23QoNqmZI12giNhJUAC5pwaHrXd2RQcQb9mXlb3k3gQ==
-                      -----END PUBLIC KEY-----
-                    rekor:
-                      ignoreTlog: true
-                    ctlog:
-                      ignoreSCT: true
-    - name: require-low-ai-risk
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-              namespaces: [apps]
-      verifyImages:
-        - imageReferences: ["k3d-dgreg:5000/*"]
-          failureAction: Enforce
-          attestations:
-            - type: https://driftguard.dev/risk/v1
-              attestors:
-                - entries:
-                    - keys:
-                        publicKeys: |-
-                          -----BEGIN PUBLIC KEY-----
-                          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZgofJacWYejHGWRi5SD4h6izA3oQ
-                          F9uPGTLJhGanqqMGLkqD3tDd/YXzlcYXPG2+GjR9xcf5OzzWKVqEWoNR9g==
-                          -----END PUBLIC KEY-----
-                        rekor:
-                          ignoreTlog: true
-                        ctlog:
-                          ignoreSCT: true
-              conditions:
-                - all:
-                    - key: "{{ risk_score }}"
-                      operator: LessThan
-                      value: 70
+  validationActions: [Deny]
+  failurePolicy: Fail
+  webhookConfiguration:
+    timeoutSeconds: 30
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: ['v1']
+        operations: ['CREATE', 'UPDATE']
+        resources: ['pods']
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: apps
+  matchImageReferences:
+    - glob: 'k3d-dgreg:5000/*'
+  attestors:
+    - name: ci
+      cosign:
+        key:
+          data: |
+            -----BEGIN PUBLIC KEY-----
+            MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENcPzW8nyvuyDBK1Lrb3tEkM62Z1Y
+            A1kTEiNopFU+IXSwa45MX1drFZDCRG3PsEiJ/b6O8xuqY1rDzBcNM1ZqMQ==
+            -----END PUBLIC KEY-----
+        ctlog:
+          insecureIgnoreTlog: true
+          insecureIgnoreSCT: true
+    - name: ai
+      cosign:
+        key:
+          data: |
+            -----BEGIN PUBLIC KEY-----
+            MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEPmkvWhikqZ0fT1EJ158EnwKHVpQS
+            vPe+Ur9ePxKkkvOzCCczCqWPGX+PbcCyR3gJzAmz8lAFHHbURpqrgh9tcw==
+            -----END PUBLIC KEY-----
+        ctlog:
+          insecureIgnoreTlog: true
+          insecureIgnoreSCT: true
+  attestations:
+    - name: risk
+      intoto:
+        type: https://driftguard.dev/risk/v1
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.ci])).all(e, e > 0)
+      message: 'require-ci-signature: image is not signed by the DriftGuard CI key'
+    - expression: >-
+        images.containers.map(image, verifyAttestationSignatures(image, attestations.risk, [attestors.ai])).all(e, e > 0)
+      message: 'require-low-ai-risk: no attestation signed by the AI key'
+    - expression: >-
+        images.containers.map(image, extractPayload(image, attestations.risk).predicate.risk_score < 70).all(e, e)
+      message: 'require-low-ai-risk: risk_score is 70 or higher'
